@@ -1,60 +1,66 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express = require('express');
-const qrcode = require('qrcode');
 const cors = require('cors');
+const qrcode = require('qrcode');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+const PORT = process.env.PORT || 3001;
+
 let qrCodeData = null;
 let isConnected = false;
 
-const client = new Client({ authStrategy: new LocalAuth() });
+const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: './session' }),
+    puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    }
+});
 
 client.on('qr', async (qr) => {
-  qrCodeData = await qrcode.toDataURL(qr);
-  isConnected = false;
-  console.log('QR Code gerado');
+    isConnected = false;
+    qrCodeData = await qrcode.toDataURL(qr);
+    console.log('QR Code gerado');
 });
 
 client.on('ready', () => {
-  isConnected = true;
-  qrCodeData = null;
-  console.log('WhatsApp conectado!');
+    isConnected = true;
+    qrCodeData = null;
+    console.log('WhatsApp conectado!');
 });
 
 client.on('disconnected', () => {
-  isConnected = false;
-  console.log('Desconectado');
+    isConnected = false;
+    console.log('WhatsApp desconectado');
+    client.initialize();
 });
 
 client.initialize();
 
 app.get('/status', (req, res) => {
-  res.json({ connected: isConnected });
+    res.json({ connected: isConnected });
 });
 
 app.get('/qr', (req, res) => {
-  res.json({ qr: qrCodeData });
+    res.json({ qr: qrCodeData });
 });
 
 app.post('/send', async (req, res) => {
-  const { phone, message } = req.body;
-  if (!isConnected) return res.json({ success: false, error: 'WhatsApp não conectado' });
-  try {
+    const { phone, message } = req.body;
+    if (!isConnected) return res.status(400).json({ error: 'WhatsApp não conectado' });
     const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     await client.sendMessage(chatId, message);
     res.json({ success: true });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
 });
 
 app.post('/disconnect', async (req, res) => {
-  await client.destroy();
-  isConnected = false;
-  res.json({ success: true });
+    await client.logout();
+    isConnected = false;
+    res.json({ success: true });
 });
 
-app.listen(3001, () => console.log('Servidor rodando em http://localhost:3001'));
+app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+});
