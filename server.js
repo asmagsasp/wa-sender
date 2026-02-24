@@ -9,67 +9,88 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-let qrCodeData = null;
-let isConnected = false;
+const sessions = {}; // { userId: { client, qrCode, isConnected } }
 
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './session' }),
+function getSession(userId) {
+  return sessions[userId];
+}
+
+function createSession(userId) {
+  if (sessions[userId]) return sessions[userId];
+
+  const client = new Client({
+    authStrategy: new LocalAuth({ clientId: userId, dataPath: './sessions' }),
     puppeteer: {
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
-        ]
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
     }
-});
+  });
 
-client.on('qr', async (qr) => {
-    isConnected = false;
-    qrCodeData = await qrcode.toDataURL(qr);
-    console.log('QR Code gerado');
-});
+  sessions[userId] = { client, qrCode: null, isConnected: false };
 
-client.on('ready', () => {
-    isConnected = true;
-    qrCodeData = null;
-    console.log('WhatsApp conectado!');
-});
+  client.on('qr', async (qr) => {
+    sessions[userId].isConnected = false;
+    sessions[userId].qrCode = await qrcode.toDataURL(qr);
+    console.log(`QR gerado para ${userId}`);
+  });
 
-client.on('disconnected', () => {
-    isConnected = false;
-    console.log('WhatsApp desconectado');
-    client.initialize();
-});
+  client.on('ready', () => {
+    sessions[userId].isConnected = true;
+    sessions[userId].qrCode = null;
+    console.log(`WhatsApp conectado: ${userId}`);
+  });
 
-client.initialize();
+  client.on('disconnected', () => {
+    sessions[userId].isConnected = false;
+    console.log(`WhatsApp desconectado: ${userId}`);
+  });
+
+  client.initialize();
+  return sessions[userId];
+}
 
 app.get('/status', (req, res) => {
-    res.json({ connected: isConnected });
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'userId obrigatório' });
+  const session = getSession(userId);
+  res.json({ connected: session?.isConnected || false });
 });
 
 app.get('/qr', (req, res) => {
-    res.json({ qr: qrCodeData });
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'userId obrigatório' });
+  createSession(userId);
+  const session = getSession(userId);
+  res.json({ qr: session?.qrCode || null });
 });
 
 app.post('/send', async (req, res) => {
-    const { phone, message } = req.body;
-    if (!isConnected) return res.status(400).json({ error: 'WhatsApp não conectado' });
-    const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-    await client.sendMessage(chatId, message);
-    res.json({ success: true });
+  const { userId, phone, message } = req.body;
+  const session = getSession(userId);
+  if (!session?.isConnected) return res.status(400).json({ error: 'WhatsApp não conectado' });
+  const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+  await session.client.sendMessage(chatId, message);
+  res.json({ success: true });
 });
 
 app.post('/disconnect', async (req, res) => {
-    await client.logout();
-    isConnected = false;
-    res.json({ success: true });
+  const { userId } = req.body;
+  const session = getSession(userId);
+  if (session) {
+    await session.client.logout();
+    delete sessions[userId];
+  }
+  res.json({ success: true });
 });
 
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
