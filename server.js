@@ -24,8 +24,7 @@ const client = new Client({
             '--no-zygote',
             '--single-process',
             '--disable-gpu'
-        ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable'
+        ]
     }
 });
 
